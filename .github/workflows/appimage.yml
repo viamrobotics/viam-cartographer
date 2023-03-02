@@ -90,7 +90,7 @@ jobs:
       with:
         headers: "cache-control: no-cache"
         path: 'viam-cartographer/etc/packaging/appimages/deploy/'
-        destination: 'packages.viam.com/apps/slam-servers-dev/'
+        destination: 'packages.viam.com/apps/slam-servers/'
         glob: '*'
         parent: false
         gzip: false
