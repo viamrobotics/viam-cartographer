@@ -158,6 +158,141 @@ std::atomic<bool> b_continue_session{true};
     return grpc::Status::OK;
 }
 
+::grpc::Status SLAMServiceImpl::GetPosition(
+    ServerContext *context, const GetPositionRequest *request,
+    GetPositionResponse *response) {
+    cartographer::transform::Rigid3d global_pose;
+    {
+        std::lock_guard<std::mutex> lk(viam_response_mutex);
+        global_pose = latest_global_pose;
+    }
+
+    // Rotate pose to XZ plane. Additional angle offset is used so rotations
+    // occur along the Y axis, to match the XZ plane
+    auto rotated_vector = pcdRotation * global_pose.translation();
+    auto rotated_quat =
+        pcdOffsetRotation * global_pose.rotation() * pcdRotation;
+
+    // Set pose for our response
+    Pose *myPose = response->mutable_pose();
+    myPose->set_x(rotated_vector.x());
+    myPose->set_y(rotated_vector.y());
+    myPose->set_z(rotated_vector.z());
+
+    // Set extra for our response (currently stores quaternion)
+    google::protobuf::Struct *q;
+    google::protobuf::Struct *extra = response->mutable_extra();
+    q = extra->mutable_fields()->operator[]("quat").mutable_struct_value();
+    q->mutable_fields()->operator[]("real").set_number_value(rotated_quat.w());
+    q->mutable_fields()->operator[]("imag").set_number_value(rotated_quat.x());
+    q->mutable_fields()->operator[]("jmag").set_number_value(rotated_quat.y());
+    q->mutable_fields()->operator[]("kmag").set_number_value(rotated_quat.z());
+
+    // Set component_reference for our response
+    response->set_component_reference(camera_name);
+
+    return grpc::Status::OK;
+}
+
+::grpc::Status SLAMServiceImpl::GetPointCloudMap(
+    ServerContext *context, const GetPointCloudMapRequest *request,
+    ServerWriter<GetPointCloudMapResponse> *writer) {
+    std::string pointcloud_map;
+    // Write or grab the latest pointcloud map in form of a string
+    try {
+        std::shared_lock optimization_lock{optimization_shared_mutex,
+                                           std::defer_lock};
+        if (optimization_lock.try_lock()) {
+            // We are able to lock the optimization_shared_mutex, which means
+            // that the optimization is not ongoing and we can grab the newest
+            // map
+            GetLatestSampledPointCloudMapString(pointcloud_map);
+            std::lock_guard<std::mutex> lk(viam_response_mutex);
+            latest_pointcloud_map = pointcloud_map;
+        } else {
+            // Either we are in localization mode or we couldn't lock the mutex
+            // which means the optimization process locked it and we need to use
+            // the backed up latest map
+            if (action_mode == ActionMode::LOCALIZING) {
+                LOG(INFO)
+                    << "In localization mode, using cached pointcloud map";
+            } else {
+                LOG(INFO)
+                    << "Optimization is occuring, using cached pointcloud map";
+            }
+            std::lock_guard<std::mutex> lk(viam_response_mutex);
+            pointcloud_map = latest_pointcloud_map;
+        }
+    } catch (std::exception &e) {
+        LOG(ERROR) << "Stopping Cartographer: error encoding pointcloud: "
+                   << e.what();
+        std::terminate();
+    }
+
+    if (pointcloud_map.empty()) {
+        LOG(ERROR) << "map pointcloud does not have points yet";
+        return grpc::Status(grpc::StatusCode::UNAVAILABLE,
+                            "map pointcloud does not have points yet");
+    }
+
+    std::string pcd_chunk;
+    GetPointCloudMapResponse response;
+    for (int start_index = 0; start_index < pointcloud_map.size();
+         start_index += maximumGRPCByteChunkSize) {
+        pcd_chunk =
+            pointcloud_map.substr(start_index, maximumGRPCByteChunkSize);
+        response.set_point_cloud_pcd_chunk(pcd_chunk);
+        bool ok = writer->Write(response);
+        if (!ok)
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE,
+                                "error while writing to stream: stream closed");
+    }
+    return grpc::Status::OK;
+}
+
+::grpc::Status SLAMServiceImpl::GetInternalState(
+    ServerContext *context, const GetInternalStateRequest *request,
+    ServerWriter<GetInternalStateResponse> *writer) {
+    boost::uuids::uuid uuid = boost::uuids::random_generator()();
+    std::string filename = path_to_map + "/" + "temp_internal_state_" +
+                           boost::uuids::to_string(uuid) + ".pbstream";
+    {
+        std::lock_guard<std::mutex> lk(map_builder_mutex);
+        bool ok = map_builder.SaveMapToFile(true, filename);
+        if (!ok) {
+            std::ostringstream oss;
+            oss << "Failed to save the state as a pbstream.";
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE, oss.str());
+        }
+    }
+
+    std::string buf;
+    // deferring reading the pbstream file in chunks until we run into issues
+    // with loading the file into memory
+    try {
+        ConvertSavedMapToStream(filename, &buf);
+    } catch (std::exception &e) {
+        std::ostringstream oss;
+        oss << "error during data serialization: " << e.what();
+        return grpc::Status(grpc::StatusCode::UNAVAILABLE, oss.str());
+    }
+
+    std::string internal_state_chunk;
+    GetInternalStateResponse response;
+    for (int start_index = 0; start_index < buf.size();
+         start_index += maximumGRPCByteChunkSize) {
+        internal_state_chunk =
+            buf.substr(start_index, maximumGRPCByteChunkSize);
+        response.set_internal_state_chunk(internal_state_chunk);
+        bool ok = writer->Write(response);
+        if (!ok)
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE,
+                                "error while writing to stream: stream closed");
+    }
+
+    return grpc::Status::OK;
+}
+
 void SLAMServiceImpl::ConvertSavedMapToStream(std::string filename,
                                               std::string *buffer) {
     std::stringstream error_forwarded;

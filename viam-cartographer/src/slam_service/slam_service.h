@@ -31,6 +31,12 @@ using viam::service::slam::v1::GetPointCloudMapStreamRequest;
 using viam::service::slam::v1::GetPointCloudMapStreamResponse;
 using viam::service::slam::v1::GetPositionNewRequest;
 using viam::service::slam::v1::GetPositionNewResponse;
+using viam::service::slam::v1::GetInternalStateRequest;
+using viam::service::slam::v1::GetInternalStateResponse;
+using viam::service::slam::v1::GetPointCloudMapRequest;
+using viam::service::slam::v1::GetPointCloudMapResponse;
+using viam::service::slam::v1::GetPositionRequest;
+using viam::service::slam::v1::GetPositionResponse;
 using viam::service::slam::v1::SLAMService;
 
 namespace viam {
@@ -91,6 +97,27 @@ class SLAMServiceImpl final : public SLAMService::Service {
     ::grpc::Status GetInternalStateStream(
         ServerContext *context, const GetInternalStateStreamRequest *request,
         ServerWriter<GetInternalStateStreamResponse> *writer) override;
+
+    // GetPositionNew returns the relative pose of the robot w.r.t the "origin"
+    // of the map, which is the starting point from where the map was initially
+    // created along with a component reference.
+    ::grpc::Status GetPosition(ServerContext *context,
+                                  const GetPositionRequest *request,
+                                  GetPositionResponse *response) override;
+
+    // GetPointCloudMap returns a stream of the current sampled pointcloud
+    // derived from the painted map, using probability estimates in chunks with
+    // a max size of maximumGRPCByteChunkSize
+    ::grpc::Status GetPointCloudMap(
+        ServerContext *context, const GetPointCloudMapRequest *request,
+        ServerWriter<GetPointCloudMapResponse> *writer) override;
+
+    // GetInternalState returns a stream of the current internal state of the
+    // map which is a pbstream for cartographer in chunks of size
+    // maximumGRPCByteChunkSize
+    ::grpc::Status GetInternalState(
+        ServerContext *context, const GetInternalStateRequest *request,
+        ServerWriter<GetInternalStateResponse> *writer) override;
 
     // RunSLAM sets up and runs cartographer. It runs cartographer in
     // the ActionMode mode: Either creating
