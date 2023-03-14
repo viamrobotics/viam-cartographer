@@ -21,3 +21,20 @@ jobs:
     uses: viamrobotics/viam-cartographer/.github/workflows/appimage.yml@main
     secrets:
       GCP_CREDENTIALS: ${{ secrets.GCP_CREDENTIALS }}
+
+  slack-workflow-status:
+      if: ${{ failure() }}
+      name: Post Workflow Status To Slack
+      needs:
+        - appimage
+      runs-on: ubuntu-latest
+      permissions:
+        actions: 'read'
+      steps:
+        - name: Slack Workflow Notification
+          uses: Gamesight/slack-workflow-status@master
+          with:
+            repo_token: ${{secrets.GITHUB_TOKEN}}
+            slack_webhook_url: ${{secrets.SLACK_WEBHOOK_URL}}
+            channel: '#team-slam-github-notifs'
+            name: 'Workflow Status'
