@@ -52,13 +52,13 @@ const (
 
 var (
 	orbslamIntCameraMutex                     sync.Mutex
-	orbslamIntCameraReleaseImagesChan         chan int = make(chan int, 2)
-	orbslamIntWebcamReleaseImageChan          chan int = make(chan int, 1)
-	orbslamIntSynchronizeCamerasChan          chan int = make(chan int)
-	cartographerIntLidarReleasePointCloudChan chan int = make(chan int, 1)
-	validMapRate                                       = 200
-	_true                                              = true
-	_false                                             = false
+	orbslamIntCameraReleaseImagesChan         = make(chan int, 2)
+	orbslamIntWebcamReleaseImageChan          = make(chan int, 1)
+	orbslamIntSynchronizeCamerasChan          = make(chan int)
+	cartographerIntLidarReleasePointCloudChan = make(chan int, 1)
+	validMapRate                              = 200
+	_true                                     = true
+	_false                                    = false
 )
 
 func getNumOrbslamImages(mode slam.Mode) int {
@@ -109,6 +109,24 @@ func setupTestGRPCServer(tb testing.TB) (*grpc.Server, int) {
 	go grpcServer.Serve(listener)
 
 	return grpcServer, listener.Addr().(*net.TCPAddr).Port
+}
+
+func getGoodOrMissingDistortionParamsCamera(projA transform.Projector) *inject.Camera {
+	cam := &inject.Camera{}
+	cam.StreamFunc = func(ctx context.Context, errHandlers ...gostream.ErrorHandler) (gostream.VideoStream, error) {
+		return gostream.NewEmbeddedVideoStreamFromReader(
+			gostream.VideoReaderFunc(func(ctx context.Context) (image.Image, func(), error) {
+				return image.NewNRGBA(image.Rect(0, 0, 1024, 1024)), nil, nil
+			}),
+		), nil
+	}
+	cam.NextPointCloudFunc = func(ctx context.Context) (pointcloud.PointCloud, error) {
+		return nil, errors.New("camera not lidar")
+	}
+	cam.ProjectorFunc = func(ctx context.Context) (transform.Projector, error) {
+		return projA, nil
+	}
+	return cam
 }
 
 func setupDeps(attr *slamConfig.AttrConfig) registry.Dependencies {
@@ -190,37 +208,13 @@ func setupDeps(attr *slamConfig.AttrConfig) registry.Dependencies {
 			}
 			deps[camera.Named(sensor)] = cam
 		case "good_camera":
-			cam.StreamFunc = func(ctx context.Context, errHandlers ...gostream.ErrorHandler) (gostream.VideoStream, error) {
-				return gostream.NewEmbeddedVideoStreamFromReader(
-					gostream.VideoReaderFunc(func(ctx context.Context) (image.Image, func(), error) {
-						return image.NewNRGBA(image.Rect(0, 0, 1024, 1024)), nil, nil
-					}),
-				), nil
-			}
-			cam.NextPointCloudFunc = func(ctx context.Context) (pointcloud.PointCloud, error) {
-				return nil, errors.New("camera not lidar")
-			}
-			cam.ProjectorFunc = func(ctx context.Context) (transform.Projector, error) {
-				return projA, nil
-			}
+			cam = getGoodOrMissingDistortionParamsCamera(projA)
 			cam.PropertiesFunc = func(ctx context.Context) (camera.Properties, error) {
 				return camera.Properties{IntrinsicParams: intrinsicsA, DistortionParams: distortionsA}, nil
 			}
 			deps[camera.Named(sensor)] = cam
 		case "missing_distortion_parameters_camera":
-			cam.StreamFunc = func(ctx context.Context, errHandlers ...gostream.ErrorHandler) (gostream.VideoStream, error) {
-				return gostream.NewEmbeddedVideoStreamFromReader(
-					gostream.VideoReaderFunc(func(ctx context.Context) (image.Image, func(), error) {
-						return image.NewNRGBA(image.Rect(0, 0, 1024, 1024)), nil, nil
-					}),
-				), nil
-			}
-			cam.NextPointCloudFunc = func(ctx context.Context) (pointcloud.PointCloud, error) {
-				return nil, errors.New("camera not lidar")
-			}
-			cam.ProjectorFunc = func(ctx context.Context) (transform.Projector, error) {
-				return projA, nil
-			}
+			cam = getGoodOrMissingDistortionParamsCamera(projA)
 			cam.PropertiesFunc = func(ctx context.Context) (camera.Properties, error) {
 				return camera.Properties{IntrinsicParams: intrinsicsA, DistortionParams: nil}, nil
 			}
@@ -699,7 +693,8 @@ func TestORBSLAMNew(t *testing.T) {
 
 		// Create slam service
 		svc, err := createSLAMService(t, attrCfg, "fake_orbslamv3", logger, false, true)
-		expectedError := errors.New("configuring camera error: error getting distortion_parameters for slam service, only BrownConrady distortion parameters are supported").Error()
+		expectedError := errors.New("configuring camera error: error getting distortion_parameters " +
+			"for slam service, only BrownConrady distortion parameters are supported").Error()
 		test.That(t, err.Error(), test.ShouldContainSubstring, expectedError)
 
 		grpcServer.Stop()
@@ -720,7 +715,8 @@ func TestORBSLAMNew(t *testing.T) {
 		// Create slam service
 		logger := golog.NewTestLogger(t)
 		svc, err := createSLAMService(t, attrCfg, "fake_orbslamv3", logger, false, true)
-		expectedError := errors.New("configuring camera error: error getting camera properties for slam service: somehow couldn't get properties").Error()
+		expectedError := errors.New("configuring camera error: error getting camera properties " +
+			"for slam service: somehow couldn't get properties").Error()
 		test.That(t, err.Error(), test.ShouldContainSubstring, expectedError)
 
 		grpcServer.Stop()

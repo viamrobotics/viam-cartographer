@@ -226,7 +226,7 @@ func configureCameras(ctx context.Context, svcConfig *slamConfig.AttrConfig,
 
 			brownConrady, ok := props.DistortionParams.(*transform.BrownConrady)
 			if !ok {
-				return "", nil, errors.New("error getting distortion_parameters for slam service," +
+				return "", nil, errors.New("error getting distortion_parameters for slam service, " +
 					"only BrownConrady distortion parameters are supported")
 			}
 			if err := brownConrady.CheckValid(); err != nil {
@@ -281,6 +281,7 @@ func (slamSvc *builtIn) Position(ctx context.Context, name string, extra map[str
 		pInFrame = referenceframe.NewPoseInFrame(resp.GetComponentReference(), spatialmath.NewPoseFromProtobuf(resp.GetPose()))
 		returnedExt = resp.Extra.AsMap()
 	} else {
+		//nolint:staticcheck
 		req := &pb.GetPositionRequest{Name: name, Extra: ext}
 
 		resp, err := slamSvc.clientAlgo.GetPosition(ctx, req)
@@ -366,6 +367,7 @@ func (slamSvc *builtIn) GetMap(
 	if slamSvc.dev {
 		slamSvc.logger.Debug("IN DEV MODE (map request)")
 
+		//nolint:staticcheck
 		reqPCMap := &pb.GetPointCloudMapRequest{
 			Name: name,
 		}
@@ -374,6 +376,7 @@ func (slamSvc *builtIn) GetMap(
 			return "", nil, nil, errors.New("non-pcd return type is impossible in while in dev mode")
 		}
 
+		//nolint:staticcheck
 		resp, err := slamSvc.clientAlgo.GetPointCloudMap(ctx, reqPCMap)
 		if err != nil {
 			return "", imData, vObj, errors.Errorf("error getting SLAM map (%v) : %v", mimeType, err)
@@ -394,6 +397,7 @@ func (slamSvc *builtIn) GetMap(
 
 		mimeType = rdkutils.MimeTypePCD
 	} else {
+		//nolint:staticcheck
 		req := &pb.GetMapRequest{
 			Name:               name,
 			MimeType:           mimeType,
@@ -402,6 +406,7 @@ func (slamSvc *builtIn) GetMap(
 			Extra:              ext,
 		}
 
+		//nolint:staticcheck
 		resp, err := slamSvc.clientAlgo.GetMap(ctx, req)
 		if err != nil {
 			return "", imData, vObj, errors.Errorf("error getting SLAM map (%v) : %v", mimeType, err)
@@ -440,8 +445,10 @@ func (slamSvc *builtIn) GetInternalState(ctx context.Context, name string) ([]by
 	ctx, span := trace.StartSpan(ctx, "slam::builtIn::GetInternalState")
 	defer span.End()
 
+	//nolint:staticcheck
 	req := &pb.GetInternalStateRequest{Name: name}
 
+	//nolint:staticcheck
 	resp, err := slamSvc.clientAlgo.GetInternalState(ctx, req)
 	if err != nil {
 		return nil, errors.Wrap(err, "error getting the internal state from the SLAM client")
@@ -470,7 +477,9 @@ func (slamSvc *builtIn) GetInternalStateStream(ctx context.Context, name string)
 }
 
 // New returns a new slam service for the given robot.
-func New(ctx context.Context, deps registry.Dependencies, config config.Service, logger golog.Logger, bufferSLAMProcessLogs bool) (slam.Service, error) {
+func New(ctx context.Context, deps registry.Dependencies, config config.Service,
+	logger golog.Logger, bufferSLAMProcessLogs bool,
+) (slam.Service, error) {
 	ctx, span := trace.StartSpan(ctx, "slam::slamService::New")
 	defer span.End()
 
@@ -519,7 +528,8 @@ func New(ctx context.Context, deps registry.Dependencies, config config.Service,
 		}
 	}
 
-	port, dataRateMsec, mapRateSec, useLiveData, deleteProcessedData, err := slamConfig.GetOptionalParameters(svcConfig, localhost0, defaultDataRateMsec, defaultMapRateSec, logger)
+	port, dataRateMsec, mapRateSec, useLiveData, deleteProcessedData, err := slamConfig.GetOptionalParameters(svcConfig,
+		localhost0, defaultDataRateMsec, defaultMapRateSec, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -730,10 +740,16 @@ func (slamSvc *builtIn) StartSLAMProcess(ctx context.Context) error {
 		defer timeoutCancel()
 
 		if !slamSvc.bufferSLAMProcessLogs {
-			//nolint:errcheck
-			defer logReader.Close()
-			//nolint:errcheck
-			defer logWriter.Close()
+			defer func(logger golog.Logger) {
+				if err := logReader.Close(); err != nil {
+					logger.Debugw("Closing logReader returned an error", "error", err)
+				}
+			}(slamSvc.logger)
+			defer func(logger golog.Logger) {
+				if err := logWriter.Close(); err != nil {
+					logger.Debugw("Closing logReader returned an error", "error", err)
+				}
+			}(slamSvc.logger)
 		}
 
 		for {
@@ -930,7 +946,7 @@ func (slamSvc *builtIn) getAndSaveDataDense(ctx context.Context, cams []camera.C
 
 	var fileType string
 	switch slamSvc.slamMode {
-	case slam.Dim2d:
+	case slam.Dim2d, slam.Dim3d:
 		fileType = ".pcd"
 	case slam.Rgbd, slam.Mono:
 		return "", errors.Errorf("bad slamMode %v specified for this algorithm", slamSvc.slamMode)
@@ -955,6 +971,8 @@ func createTimestampFilenames(dataDirectory, primarySensorName, fileType string,
 	case slam.Dim2d:
 		filename := dataprocess.CreateTimestampFilename(dataDir, primarySensorName, fileType, timeStamp)
 		return []string{filename}, nil
+	case slam.Dim3d:
+		return nil, errors.New("Dim3d is not implemented")
 	case slam.Mono:
 		rgbFilename := dataprocess.CreateTimestampFilename(rbgDataDir, primarySensorName, fileType, timeStamp)
 		return []string{rgbFilename}, nil
