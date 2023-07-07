@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/edaniels/golog"
 	"github.com/pkg/errors"
@@ -34,6 +35,8 @@ var (
 	testMapRateSec = 200
 	_true          = true
 	_false         = false
+	_zeroInt       = 0
+	_zeroTime      = time.Time{}
 )
 
 func TestNew(t *testing.T) {
@@ -127,6 +130,62 @@ func TestNew(t *testing.T) {
 	})
 
 	testhelper.ClearDirectory(t, dataDir)
+
+	t.Run("Successful creation of cartographer slam service in localization mode", func(t *testing.T) {
+		grpcServer, port := setupTestGRPCServer(t)
+
+		attrCfg := &vcConfig.Config{
+			Sensors:       []string{},
+			ConfigParams:  map[string]string{"mode": "2d"},
+			DataDirectory: dataDir,
+			Port:          "localhost:" + strconv.Itoa(port),
+			UseLiveData:   &_false,
+			MapRateSec:    &_zeroInt,
+		}
+
+		svc, err := testhelper.CreateSLAMService(t, attrCfg, logger, false, testExecutableName)
+		test.That(t, err, test.ShouldBeNil)
+
+		timestamp1, err := svc.GetLatestMapInfo(context.Background())
+		test.That(t, err, test.ShouldBeNil)
+		_, err = svc.GetPointCloudMap(context.Background())
+		test.That(t, err, test.ShouldBeNil)
+		timestamp2, err := svc.GetLatestMapInfo(context.Background())
+		test.That(t, err, test.ShouldBeNil)
+		test.That(t, timestamp1.After(_zeroTime), test.ShouldBeTrue)
+		test.That(t, timestamp1, test.ShouldResemble, timestamp2)
+
+		grpcServer.Stop()
+		test.That(t, svc.Close(context.Background()), test.ShouldBeNil)
+	})
+
+	t.Run("Successful creation of cartographer slam service in non localization mode", func(t *testing.T) {
+		grpcServer, port := setupTestGRPCServer(t)
+		attrCfg := &vcConfig.Config{
+			Sensors:       []string{},
+			ConfigParams:  map[string]string{"mode": "2d"},
+			DataDirectory: dataDir,
+			Port:          "localhost:" + strconv.Itoa(port),
+			UseLiveData:   &_false,
+			MapRateSec:    &testMapRateSec,
+		}
+
+		svc, err := testhelper.CreateSLAMService(t, attrCfg, logger, false, testExecutableName)
+		test.That(t, err, test.ShouldBeNil)
+
+		timestamp1, err := svc.GetLatestMapInfo(context.Background())
+		test.That(t, err, test.ShouldBeNil)
+		_, err = svc.GetPointCloudMap(context.Background())
+		test.That(t, err, test.ShouldBeNil)
+		timestamp2, err := svc.GetLatestMapInfo(context.Background())
+		test.That(t, err, test.ShouldBeNil)
+
+		test.That(t, timestamp1.After(_zeroTime), test.ShouldBeTrue)
+		test.That(t, timestamp2.After(timestamp1), test.ShouldBeTrue)
+
+		grpcServer.Stop()
+		test.That(t, svc.Close(context.Background()), test.ShouldBeNil)
+	})
 }
 
 func TestDataProcess(t *testing.T) {
