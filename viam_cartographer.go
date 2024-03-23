@@ -32,7 +32,7 @@ import (
 
 // Model is the model name of cartographer.
 var (
-	Model    = resource.NewModel("viam", "slam", "cartographer")
+	Model    = resource.NewModel("kats-org", "slam", "cartographer")
 	cartoLib cartofacade.CartoLib
 	// ErrClosed denotes that the slam service method was called on a closed slam resource.
 	ErrClosed = errors.Errorf("resource (%s) is closed", Model.String())
