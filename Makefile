@@ -23,24 +23,6 @@ artifact-pull: $(TOOL_BIN)/artifact
 $(TOOL_BIN)/artifact:
 	 go install go.viam.com/utils/artifact/cmd/artifact
 
-$(TOOL_BIN)/buf:
-	go install github.com/bufbuild/buf/cmd/buf@v1.8.0
-
-$(TOOL_BIN)/protoc-gen-grpc-cpp:
-	mkdir -p "$(TOOL_BIN)"
-	which grpc_cpp_plugin && ln -sf `which grpc_cpp_plugin` $(TOOL_BIN)/protoc-gen-grpc-cpp
-
-grpc/buf: $(TOOL_BIN)/buf $(TOOL_BIN)/protoc-gen-grpc-cpp
-	buf generate --template ./buf/buf.gen.yaml buf.build/viamrobotics/api
-	buf generate --template ./buf/buf.grpc.gen.yaml buf.build/viamrobotics/api
-	buf generate --template ./buf/buf.gen.yaml buf.build/googleapis/googleapis
-	# Touch this file so that we don't regenerate the buf compiled C++ files
-	# every time we build
-	@touch grpc/buf
-
-grpc/buf_clean:
-	rm -rf grpc
-
 clean:
 	rm -rf grpc $(BIN_OUTPUT_PATH) viam-cartographer/$(BUILD_DIR)
 
@@ -100,7 +82,7 @@ endif
 
 build: cartographer-module
 
-viam-cartographer/build/unit_tests: ensure-submodule-initialized grpc/buf
+viam-cartographer/build/unit_tests: ensure-submodule-initialized
 	cd viam-cartographer && cmake -B$(BUILD_DIR) -G Ninja ${EXTRA_CMAKE_FLAGS} && cmake --build $(BUILD_DIR)
 
 cartographer-module: viam-cartographer/build/unit_tests
